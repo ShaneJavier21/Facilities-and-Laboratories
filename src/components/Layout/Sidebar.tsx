@@ -108,12 +108,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, isOpen, onToggle }) => {
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-gradient-to-br from-essu-gold-500 to-essu-gold-600 rounded-full flex items-center justify-center">
               <span className="text-sm font-medium text-white">
-                {user.name.split(' ').map(n => n[0]).join('')}
+                {user.name?.split(' ').map(n => n[0]).join('') || ''}
               </span>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-white truncate">
-                {user.name}
+                {user.name || ''}
               </p>
               <p className="text-xs text-essu-green-200 truncate">
                 {user.role.replace('_', ' ').toUpperCase()}
