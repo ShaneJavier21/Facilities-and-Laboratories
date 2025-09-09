@@ -116,7 +116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, isOpen, onToggle }) => {
                 {user.name || ''}
               </p>
               <p className="text-xs text-essu-green-200 truncate">
-                {user.role.replace('_', ' ').toUpperCase()}
+                {user.role?.replace('_', ' ').toUpperCase() || 'USER'}
               </p>
             </div>
           </div>
