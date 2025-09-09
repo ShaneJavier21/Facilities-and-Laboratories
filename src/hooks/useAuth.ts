@@ -1,82 +1,166 @@
-import { useState, useEffect } from 'react';
-import { User, UserRole } from '../types';
+import { useState, useEffect } from 'react'
+import { Session } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 
-// Mock user data - in a real app, this would come from an API
-const mockUsers: User[] = [
-  {
-    id: '1',
-    name: 'Dr. Juan Dela Cruz',
-    email: 'admin@essu.edu.ph',
-    role: 'system_admin',
-    department: 'ICT Office'
-  },
-  {
-    id: '2',
-    name: 'Engr. Maria Santos',
-    email: 'facilities@essu.edu.ph',
-    role: 'facility_manager',
-    department: 'Physical Plant Office'
-  },
-  {
-    id: '3',
-    name: 'Mr. Roberto Garcia',
-    email: 'maintenance@essu.edu.ph',
-    role: 'maintenance_personnel',
-    department: 'Maintenance Unit'
-  },
-  {
-    id: '4',
-    name: 'Dr. Carmen Reyes',
-    email: 'vpadmin@essu.edu.ph',
-    role: 'vp_admin',
-    department: 'Office of VP for Administration'
-  },
-  {
-    id: '5',
-    name: 'Prof. Ana Villanueva',
-    email: 'requester@essu.edu.ph',
-    role: 'office_requester',
-    department: 'College of Engineering'
-  }
-];
+interface AuthUser {
+  id: string
+  email: string
+  name?: string
+  role?: string
+}
 
-export const useAuth = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+export function useAuth() {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Simulate authentication check
-    const savedUser = localStorage.getItem('essu_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
+    handleAuthFlow()
+
+    // Listen for auth changes from Supabase
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('Supabase auth state changed:', _event, session)
+      setSession(session)
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.user_metadata?.fullName || session.user.user_metadata?.name,
+          role: session.user.user_metadata?.role
+        })
+      } else {
+        setUser(null)
+      }
+      setLoading(false)
+    })
+
+    return () => {
+      subscription.unsubscribe()
     }
-    setLoading(false);
-  }, []);
+  }, [])
 
-  const login = (email: string, role: UserRole) => {
-    const foundUser = mockUsers.find(u => u.email === email) || {
-      id: Date.now().toString(),
-      name: email.split('@')[0],
-      email,
-      role,
-      department: 'General'
-    };
-    setUser(foundUser);
-    localStorage.setItem('essu_user', JSON.stringify(foundUser));
-  };
-
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('essu_user');
-  };
-
-  const switchRole = (role: UserRole) => {
-    if (user) {
-      const updatedUser = { ...user, role };
-      setUser(updatedUser);
-      localStorage.setItem('essu_user', JSON.stringify(updatedUser));
+  const handleAuthFlow = async () => {
+    try {
+      // Check for authorization code in URL parameters
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+      
+      if (code) {
+        console.log('Authorization code found, exchanging for tokens...')
+        
+        try {
+          // Exchange code for tokens
+          const response = await fetch(`https://essu-systems-launchpad.netlify.app/.netlify/functions/exchange?code=${code}`)
+          
+          if (!response.ok) {
+            throw new Error(`Exchange failed: ${response.status}`)
+          }
+          
+          const { access_token, refresh_token, user_data } = await response.json()
+          
+          if (access_token && refresh_token) {
+            console.log('Tokens received, setting Supabase session...')
+            
+            const { data, error } = await supabase.auth.setSession({
+              access_token,
+              refresh_token
+            })
+            
+            if (error) {
+              console.error('Error setting Supabase session:', error)
+              // Fall back to user data from exchange
+              if (user_data) {
+                setUser({
+                  id: user_data.id,
+                  email: user_data.email,
+                  name: user_data.fullName || user_data.name,
+                  role: user_data.role
+                })
+              }
+              setSession(null)
+            } else {
+              console.log('Session restored successfully!', data.session)
+              setSession(data.session)
+              setUser({
+                id: data.session?.user.id || user_data?.id,
+                email: data.session?.user.email || user_data?.email,
+                name: data.session?.user.user_metadata?.fullName || user_data?.fullName || user_data?.name,
+                role: data.session?.user.user_metadata?.role || user_data?.role
+              })
+            }
+            
+            // Clean up URL by removing the code parameter
+            const newUrl = new URL(window.location.href)
+            newUrl.searchParams.delete('code')
+            window.history.replaceState({}, document.title, newUrl.toString())
+          } else {
+            console.error('No tokens received from exchange')
+            setUser(null)
+            setSession(null)
+          }
+        } catch (error) {
+          console.error('Token exchange failed:', error)
+          setUser(null)
+          setSession(null)
+        }
+      } else {
+        // No code parameter, check for existing Supabase session
+        console.log('No authorization code, checking existing session...')
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        if (session?.user) {
+          console.log('Existing session found:', session)
+          setSession(session)
+          setUser({
+            id: session.user.id,
+            email: session.user.email || '',
+            name: session.user.user_metadata?.fullName || session.user.user_metadata?.name,
+            role: session.user.user_metadata?.role
+          })
+        } else {
+          console.log('No existing session found')
+          setUser(null)
+          setSession(null)
+        }
+      }
+    } catch (error) {
+      console.error('Error in auth flow:', error)
+      setUser(null)
+      setSession(null)
+    } finally {
+      setLoading(false)
     }
-  };
+  }
 
-  return { user, loading, login, logout, switchRole };
-};
+  const checkAuthentication = async () => {
+    await handleAuthFlow()
+  }
+
+  const signOut = async () => {
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) console.error('Error signing out from Supabase:', error)
+
+      setUser(null)
+      setSession(null)
+      console.log('Signed out successfully')
+    } catch (error) {
+      console.error('Error during sign out:', error)
+    } finally {
+      setLoading(false)
+      window.location.href = 'https://essu-systems-launchpad.netlify.app/'
+    }
+  }
+
+  return {
+    user,
+    session,
+    loading,
+    signOut,
+    isAuthenticated: !!user,
+    checkAuthentication
+  }
+}
